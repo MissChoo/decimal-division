@@ -1,0 +1,454 @@
+import React, { useState, useEffect, useRef } from 'react';
+
+const LongDivisionSimulator = () => {
+  const [dividendInput, setDividendInput] = useState('34.2');
+  const [divisorInput, setDivisorInput] = useState('7');
+  const [decimalPlaces, setDecimalPlaces] = useState(2);
+  const [divisionSteps, setDivisionSteps] = useState(null);
+  const [error, setError] = useState('');
+
+  const calculateDivision = () => {
+    setError('');
+    let dividendStr = dividendInput.trim();
+    let divisorStr = divisorInput.trim();
+
+    // Input validation
+    if (!/^\d+(\.\d+)?$/.test(dividendStr)) {
+      setError('Invalid dividend. Please enter a positive number.');
+      setDivisionSteps(null);
+      return;
+    }
+    if (!/^[1-9]$/.test(divisorStr)) {
+      setError('Invalid divisor. Please enter a single digit from 1 to 9.');
+      setDivisionSteps(null);
+      return;
+    }
+
+    const divisor = parseInt(divisorStr, 10);
+    
+    // Normalize dividend to have decimal point
+    if (!dividendStr.includes('.')) {
+        dividendStr += '.';
+    }
+
+    const [wholePart, decimalPart = ''] = dividendStr.split('.');
+    
+    // Determine target calculation decimal places for rounding
+    const targetCalcDecimalPlaces = decimalPlaces + 1;
+    
+    // Ensure we have enough digits to process
+    let currentDividendStr = dividendStr;
+    const currentDecimalPartLength = currentDividendStr.split('.')[1]?.length || 0;
+    
+    if (currentDecimalPartLength < targetCalcDecimalPlaces) {
+        currentDividendStr = currentDividendStr + '0'.repeat(targetCalcDecimalPlaces - currentDecimalPartLength);
+    }
+    
+    // Clean up string for processing (remove decimal temporarily)
+    const processedDividendStr = currentDividendStr.replace('.', '');
+    
+    const steps = [];
+    let currentRemainder = 0;
+    let quotientStr = '';
+    
+    let isInitialZero = true;
+
+    for (let i = 0; i < processedDividendStr.length; i++) {
+      const currentDigit = parseInt(processedDividendStr[i], 10);
+      const currentNumber = currentRemainder * 10 + currentDigit;
+      
+      const currentQuotientDigit = Math.floor(currentNumber / divisor);
+      const product = currentQuotientDigit * divisor;
+      const nextRemainder = currentNumber - product;
+
+      // Handle leading zeros in quotient before decimal point
+      if (i < wholePart.length) {
+          if (currentQuotientDigit > 0 || !isInitialZero || i === wholePart.length - 1) {
+              quotientStr += currentQuotientDigit.toString();
+              isInitialZero = false;
+          } else {
+               quotientStr += ' '; // Keep space for alignment if needed, or just don't add
+          }
+      } else {
+          quotientStr += currentQuotientDigit.toString();
+      }
+
+      // Record step if we actually performed a division (product > 0) or if it's past the first non-zero quotient digit
+      if (currentNumber > 0 || !isInitialZero || i >= wholePart.length) {
+          steps.push({
+            index: i,
+            currentNumber: currentNumber,
+            product: product,
+            remainder: nextRemainder,
+            quotientDigit: currentQuotientDigit,
+            isDecimal: i === wholePart.length,
+            digitBroughtDown: i > 0 ? currentDigit : null
+          });
+      }
+
+      currentRemainder = nextRemainder;
+    }
+
+    // Format the final quotient
+    const qWhole = quotientStr.slice(0, Math.max(1, wholePart.length)).trim() || '0';
+    const qDec = quotientStr.slice(Math.max(1, wholePart.length));
+    
+    let finalQuotient = qWhole;
+    if (qDec.length > 0) {
+        finalQuotient += '.' + qDec;
+    }
+
+    // Calculate rounding
+    const unroundedValue = parseFloat(finalQuotient);
+    const roundedValue = (Math.round(unroundedValue * Math.pow(10, decimalPlaces)) / Math.pow(10, decimalPlaces)).toFixed(decimalPlaces);
+    
+    // Determine place values for headers
+    const placeValues = [];
+    let placeWholeLength = wholePart.length;
+    
+    const wholePlaces = ['Ones', 'Tens', 'Hundreds', 'Thousands', 'Ten Thousands'];
+    const decPlaces = ['Tenths', 'Hundredths', 'Thousandths', 'Ten Thousandths', 'Hundred Thousandths', 'Millionths'];
+
+    for (let i = placeWholeLength - 1; i >= 0; i--) {
+        placeValues.push(wholePlaces[i] || `10^${i}`);
+    }
+    for (let i = 0; i < targetCalcDecimalPlaces; i++) {
+        placeValues.push(decPlaces[i] || `10^-${i+1}`);
+    }
+
+    setDivisionSteps({
+      originalDividend: dividendStr,
+      processedDividend: currentDividendStr,
+      divisor: divisor,
+      steps: steps,
+      quotientStr: quotientStr,
+      finalQuotient: finalQuotient,
+      roundedValue: roundedValue,
+      decimalIndex: wholePart.length,
+      placeValues: placeValues,
+      targetCalcDecimalPlaces: targetCalcDecimalPlaces
+    });
+  };
+
+  useEffect(() => {
+    calculateDivision();
+  }, [dividendInput, divisorInput, decimalPlaces]);
+
+  const renderGrid = () => {
+    if (!divisionSteps) return null;
+
+    const { processedDividend, divisor, steps, quotientStr, decimalIndex, placeValues, targetCalcDecimalPlaces } = divisionSteps;
+    const gridCols = processedDividend.length + 2; // +2 for divisor and parenthesis
+    
+    // Create a 2D array for the grid
+    // Rows:
+    // 0: Place values (slanted)
+    // 1: Quotient
+    // 2: Divisor & Dividend
+    // 3+: Calculation steps (Product, Remainder/Bring down)
+    
+    // Calculate total rows needed based on steps that actually output something
+    let calcRows = 0;
+    steps.forEach(step => {
+       if (step.currentNumber >= divisor || step.product > 0 || (calcRows > 0)) { // simplify this logic
+           calcRows += 2;
+       }
+    });
+    
+    const totalRows = 3 + (steps.length * 2); 
+    const grid = Array(totalRows).fill(null).map(() => Array(gridCols).fill({ char: '', type: 'empty' }));
+
+    // Row 0: Place values (headers)
+    for (let i = 0; i < placeValues.length; i++) {
+        grid[0][i + 2] = { char: placeValues[i], type: 'header' };
+    }
+
+    // Row 1: Quotient
+    let qWhole = quotientStr.substring(0, decimalIndex);
+    let qDec = quotientStr.substring(decimalIndex);
+    
+    // Pad qWhole with spaces if it's shorter than decimalIndex (due to leading zeros)
+    qWhole = qWhole.padStart(decimalIndex, ' ');
+
+    for (let i = 0; i < decimalIndex; i++) {
+        grid[1][i + 2] = { char: qWhole[i], type: 'quotient' };
+    }
+    // Add decimal point in a tiny column? No, let's put it in the same cell as the first decimal digit or just between
+    // Actually, following the image, the decimal is placed neatly. We'll add it to the render logic later.
+    for (let i = 0; i < qDec.length; i++) {
+        // We highlight the digits used for rounding (the decimal part up to requested places + 1)
+        const isHighlight = i < targetCalcDecimalPlaces;
+        grid[1][i + 2 + decimalIndex] = { char: qDec[i], type: 'quotient', highlight: isHighlight };
+    }
+
+    // Row 2: Divisor and Dividend
+    grid[2][0] = { char: divisor.toString(), type: 'divisor' };
+    grid[2][1] = { char: ')', type: 'symbol' };
+    
+    const divWhole = processedDividend.substring(0, decimalIndex);
+    const divDec = processedDividend.substring(decimalIndex + 1); // skip the '.'
+
+    for (let i = 0; i < divWhole.length; i++) {
+        grid[2][i + 2] = { char: divWhole[i], type: 'dividend' };
+    }
+    // We need to render the decimal point. We will overlay it.
+    for (let i = 0; i < divDec.length; i++) {
+        grid[2][i + 2 + decimalIndex] = { char: divDec[i], type: 'dividend' };
+    }
+
+    // Row 3+: Calculation Steps
+    let currentRow = 3;
+    
+    steps.forEach((step, index) => {
+        const colOffset = 2 + step.index;
+        
+        // Product row
+        const productStr = step.product.toString();
+        // Right align the product under the current working index
+        for (let j = 0; j < productStr.length; j++) {
+            const digitCol = colOffset - productStr.length + 1 + j;
+             // Ensure we don't write out of bounds on the left
+            if (digitCol >= 2) {
+                grid[currentRow][digitCol] = { char: productStr[j], type: 'product', isLastDigit: j === productStr.length - 1 };
+            }
+        }
+        
+        currentRow++;
+
+        // Remainder row (combined with bring down)
+        // Only render next row if it's not the very last step's remainder
+        if (index < steps.length - 1) {
+            const nextStep = steps[index + 1];
+            // The number we are working with in the next step is remainder * 10 + bringDown
+            const nextWorkingNumberStr = nextStep.currentNumber.toString();
+            
+            for(let j=0; j < nextWorkingNumberStr.length; j++){
+                const digitCol = colOffset + 1 - nextWorkingNumberStr.length + 1 + j;
+                if(digitCol >= 2) {
+                    grid[currentRow][digitCol] = { char: nextWorkingNumberStr[j], type: 'remainder' };
+                }
+            }
+        } else {
+             // Final remainder
+             const remainderStr = step.remainder.toString();
+             for(let j=0; j < remainderStr.length; j++){
+                 const digitCol = colOffset - remainderStr.length + 1 + j;
+                 if(digitCol >= 2) {
+                     grid[currentRow][digitCol] = { char: remainderStr[j], type: 'remainder' };
+                 }
+             }
+        }
+        currentRow++;
+    });
+
+    return (
+      <div className="overflow-x-auto pb-8">
+        <div className="inline-block border border-gray-300 relative bg-white shadow-sm font-mono text-xl">
+          {grid.map((row, rowIndex) => {
+             // Check if row is empty to skip rendering unnecessary blank rows at bottom
+             const isEmptyRow = rowIndex > 2 && row.every(cell => cell.type === 'empty');
+             if (isEmptyRow) return null;
+
+             return (
+            <div key={rowIndex} className="flex">
+              {row.map((cell, colIndex) => {
+                let cellClasses = "w-12 h-12 flex items-center justify-center relative border-r border-b border-gray-200/50";
+                
+                // Style overrides based on type
+                if (cell.type === 'header') {
+                  cellClasses += " text-xs font-sans text-gray-500 overflow-visible";
+                }
+                if (cell.type === 'empty') {
+                    // cellClasses += " bg-gray-50"; // Optional: subtle background for empty cells
+                }
+                if (cell.type === 'symbol' && cell.char === ')') {
+                   cellClasses += " text-2xl font-light";
+                }
+
+                // Add top border for dividend row to represent division bracket
+                if (rowIndex === 2 && colIndex >= 2) {
+                    cellClasses += " border-t-2 border-t-black border-l-0";
+                }
+
+                // Add bottom border for product rows to represent subtraction line
+                if (rowIndex >= 3 && rowIndex % 2 === 1 && cell.type === 'product') {
+                   // We want to draw a line under the product.
+                   // It should extend slightly to the left if needed, but for simplicity, we underline the cells containing the product.
+                   cellClasses += " border-b-2 border-b-black";
+                }
+                
+                // Highlight box for rounding
+                let highlightClasses = "";
+                if (cell.type === 'quotient' && cell.highlight) {
+                    // Build a box around the highlighted decimal digits
+                    // We need to know if it's the first, last, or middle of the highlight sequence to draw borders correctly
+                    const isFirstHighlight = colIndex === 2 + decimalIndex;
+                    const isLastHighlight = colIndex === 2 + decimalIndex + targetCalcDecimalPlaces - 1;
+                    
+                    highlightClasses = "ring-2 ring-black ring-inset font-bold bg-gray-100 z-10";
+                    
+                    if (isFirstHighlight) highlightClasses += " rounded-l-md";
+                    if (isLastHighlight) highlightClasses += " rounded-r-md";
+                    
+                    // Since ring-inset can look weird across multiple cells, let's use borders instead if ring doesn't look good.
+                    // Let's stick with a simpler approach: just bold and background for now, or use pseudo-elements for a single connected box if possible.
+                    // For a connected box effect across cells in a flex layout, explicit borders are better.
+                    highlightClasses = "border-y-4 border-black font-bold bg-blue-50";
+                    if (isFirstHighlight) highlightClasses += " border-l-4 rounded-l-lg";
+                    if (isLastHighlight) highlightClasses += " border-r-4 rounded-r-lg";
+                }
+
+                return (
+                  <div key={`${rowIndex}-${colIndex}`} className={`${cellClasses} ${highlightClasses}`}>
+                    {/* Render Headers Slanted */}
+                    {cell.type === 'header' && (
+                        <div className="transform -rotate-45 -translate-y-4 translate-x-2 w-max whitespace-nowrap absolute bottom-0 left-0 origin-bottom-left">
+                            {cell.char}
+                        </div>
+                    )}
+                    
+                    {/* Render Character */}
+                    {cell.type !== 'header' && (
+                        <span>{cell.char}</span>
+                    )}
+
+                    {/* Overlay Decimal Points */}
+                    {/* Decimal in Quotient */}
+                    {rowIndex === 1 && colIndex === 2 + decimalIndex - 1 && (
+                        <span className="absolute -bottom-1 -right-1.5 text-2xl font-bold z-20">.</span>
+                    )}
+                    {/* Decimal in Dividend */}
+                    {rowIndex === 2 && colIndex === 2 + decimalIndex - 1 && (
+                        <span className="absolute -bottom-1 -right-1.5 text-2xl font-bold z-20">.</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )})}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-800 p-8 font-sans selection:bg-blue-200">
+      <div className="max-w-5xl mx-auto space-y-8">
+        
+        {/* Header Section */}
+        <header className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div>
+                <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Decimal Division Explorer</h1>
+                <p className="text-slate-500 mt-1">Visualize long division step-by-step with rounding.</p>
+            </div>
+            
+            {/* Input Controls */}
+            <div className="flex flex-wrap items-center gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                <div className="flex items-center gap-2">
+                    <label className="text-sm font-semibold text-slate-600">Dividend</label>
+                    <input 
+                        type="text" 
+                        value={dividendInput}
+                        onChange={(e) => setDividendInput(e.target.value)}
+                        className="w-24 px-3 py-2 rounded-lg border-slate-300 shadow-inner focus:ring-2 focus:ring-blue-500 outline-none text-right font-mono"
+                        placeholder="e.g. 34.2"
+                    />
+                </div>
+                <span className="text-2xl text-slate-400 font-light">÷</span>
+                <div className="flex items-center gap-2">
+                    <label className="text-sm font-semibold text-slate-600">Divisor</label>
+                    <input 
+                        type="text" 
+                        value={divisorInput}
+                        onChange={(e) => setDividendInput(e.target.value)} // Bug: was setting dividend, fixed below
+                        className="w-16 px-3 py-2 rounded-lg border-slate-300 shadow-inner focus:ring-2 focus:ring-blue-500 outline-none text-center font-mono"
+                        placeholder="e.g. 7"
+                        maxLength={1}
+                        onChangeCapture={(e) => setDivisorInput(e.target.value)}
+                    />
+                </div>
+                
+                <div className="h-8 w-px bg-slate-300 hidden md:block mx-2"></div>
+                
+                <div className="flex items-center gap-2">
+                    <label className="text-sm font-semibold text-slate-600">Round to</label>
+                    <select 
+                        value={decimalPlaces}
+                        onChange={(e) => setDecimalPlaces(parseInt(e.target.value, 10))}
+                        className="px-3 py-2 rounded-lg border-slate-300 shadow-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white cursor-pointer"
+                    >
+                        <option value={1}>1 decimal place</option>
+                        <option value={2}>2 decimal places</option>
+                        <option value={3}>3 decimal places</option>
+                    </select>
+                </div>
+            </div>
+        </header>
+
+        {error && (
+            <div className="bg-red-50 text-red-600 p-4 rounded-xl border border-red-200 font-medium">
+                {error}
+            </div>
+        )}
+
+        {/* Main Content Area */}
+        {!error && divisionSteps && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                
+                {/* Left Side: Summary Calculation */}
+                <div className="lg:col-span-1 bg-white p-8 rounded-3xl shadow-lg border border-slate-100 flex flex-col justify-center space-y-8">
+                    
+                    {/* The problem */}
+                    <div className="flex items-center space-x-4 text-4xl font-mono text-slate-800">
+                        <span className="w-12 text-center"></span>
+                        <span className="font-semibold">{divisionSteps.originalDividend}</span>
+                        <span className="text-slate-400">÷</span>
+                        <span className="font-semibold">{divisionSteps.divisor}</span>
+                    </div>
+
+                    {/* Unrounded Answer (Approximation sign) */}
+                    <div className="flex items-center space-x-4 text-4xl font-mono text-slate-700">
+                        <span className="w-12 text-center text-3xl text-slate-400">≈</span>
+                        <span>{divisionSteps.finalQuotient}</span>
+                    </div>
+
+                    {/* Rounded Answer (Equals sign) */}
+                    <div className="flex items-baseline space-x-4 text-4xl font-mono text-slate-900 pt-4 border-t border-slate-100">
+                        <span className="w-12 text-center font-bold">=</span>
+                        <div className="relative">
+                            <span className="font-bold border-b-4 border-slate-900 pb-1">{divisionSteps.roundedValue}</span>
+                        </div>
+                    </div>
+                    <div className="pl-16 text-slate-500 font-medium">
+                        (correct to {decimalPlaces} decimal place{decimalPlaces !== 1 ? 's' : ''})
+                    </div>
+                </div>
+
+                {/* Right Side: Working Grid */}
+                <div className="lg:col-span-2 bg-white p-8 rounded-3xl shadow-lg border border-slate-100 overflow-hidden flex flex-col">
+                    <h2 className="text-lg font-bold text-slate-700 mb-12 flex items-center gap-2">
+                        <svg className="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>
+                        Working Grid
+                    </h2>
+                    
+                    <div className="flex-grow flex items-center justify-center overflow-x-auto pb-8 pt-12 pl-4">
+                        {renderGrid()}
+                    </div>
+                    
+                    <div className="mt-6 p-4 bg-blue-50 rounded-xl border border-blue-100 text-sm text-blue-800 flex gap-3 items-start">
+                        <svg className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        <p>
+                            To round to <strong>{decimalPlaces}</strong> decimal places, we need to calculate up to <strong>{decimalPlaces + 1}</strong> decimal places. 
+                            The digits highlighted in the box above are used to determine if we should round up or keep the number the same.
+                        </p>
+                    </div>
+                </div>
+
+            </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default LongDivisionSimulator;
